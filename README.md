@@ -1,4 +1,4 @@
-# woozbot
+# woozbot/wzwsprite
 
 auto-farms wood and ore in wzw. really anything clickable. two-stage detection.
 shape matching first, then color histogram to filter false positives. works on mac and windows etc etc
