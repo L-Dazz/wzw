@@ -1,0 +1,31 @@
+{
+  "sprites_dir": "sprites",
+  "template_paths": [
+    "sprites\\test.png"
+  ],
+  "shape_threshold": 0.6,
+  "color_threshold": 0.35,
+  "scale_min": 0.15,
+  "scale_max": 0.6,
+  "scale_step": 0.05,
+  "roi": {
+    "x": 1293,
+    "y": 406,
+    "w": 490,
+    "h": 360
+  },
+  "min_click_distance": 30,
+  "click_cooldown": 1.0,
+  "click_times": 2,
+  "click_gap_min": 0.2,
+  "click_gap_max": 1.4,
+  "between_clicks_min": 0.3,
+  "between_clicks_max": 0.8,
+  "loop_delay": 0.5,
+  "randomize": true,
+  "random_offset_px": 5,
+  "random_delay_min": 0.05,
+  "random_delay_max": 0.2,
+  "mouse_move_duration": 0.15,
+  "debug": false
+}
