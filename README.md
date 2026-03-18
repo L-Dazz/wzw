@@ -35,6 +35,11 @@ will detect (should detect) OS, sprites folder (or create), debug mode toggle (k
 when it asks, press enter to use the default (sprites/) folder or give it another path. it'll create the folder if it doesn't exist
 
 move your sprite as pngs in there. just the sprite, minimal background around is like 90% of whether detection works.
+
+the template should also be roughly the same size as the sprite appears in your game window. with default settings (scale_min 0.15 → scale_max 0.60) the script tests the template at 15%–60% of its original size. 
+
+rule of thumb: resize your template so the in-game sprite lands somewhere in the middle of your scale range, not at the edge. ~200×150px is a reasonable starting size for most sprites in a browser game window.
+
 (currently only supports 1, well, actually, try as many as you want. i didn't test)
 
 ---
