@@ -109,3 +109,4 @@ if no display is available (SSH etc) it writes debug_out.png each frame instead
 **slow** — set a tighter ROI. also lower scale_max if sprites don't appear at large sizes in your game window (Full-screen scanning on 4K is usually slow.)
 
 **anti cheat**  uhh probably not an issue lol
+shimshim
