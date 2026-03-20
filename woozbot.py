@@ -84,8 +84,14 @@ class Config:
                 data = json.load(f)
             c = cls()
             for k, v in data.items():
-                if hasattr(c, k):
-                    setattr(c, k, v)
+                if not hasattr(c, k):
+                    continue
+                # Expand ~ in any string path fields loaded from disk.
+                if k in ("sprites_dir",) and isinstance(v, str):
+                    v = str(Path(v).expanduser())
+                if k == "template_paths" and isinstance(v, list):
+                    v = [str(Path(p).expanduser()) for p in v]
+                setattr(c, k, v)
             return c
         return cls()
 
@@ -163,11 +169,16 @@ class PlatformHelper:
         # --- screen recording: try to grab 1 pixel ---
         try:
             with mss.mss() as sct:
-                mon = {"left": 0, "top": 0, "width": 1, "height": 1}
+                # Grab a 10×10 block — large enough to detect an all-black
+                # frame that macOS returns silently when permission is denied.
+                mon = {"left": 0, "top": 0, "width": 10, "height": 10}
                 raw = np.array(sct.grab(mon))
-            # mss on macOS returns a black 1×1 when Screen Recording is denied
-            # any non-trivially-zero grab usually means it worked
-            screen_ok = True
+            # If the entire capture is zero the permission is blocked.
+            # A real screen will almost never be pure black across 100 pixels.
+            if raw[:, :, :3].max() == 0:
+                screen_ok = False
+            else:
+                screen_ok = True
         except Exception:
             screen_ok = False
 
@@ -241,11 +252,23 @@ class ScreenCapture:
         self.scale = scale
 
     def grab(self) -> np.ndarray:
-        monitor = (
-            {"left": self.roi["x"], "top": self.roi["y"],
-             "width": self.roi["w"], "height": self.roi["h"]}
-            if self.roi else self._sct.monitors[1]
-        )
+        if self.roi:
+            monitor = {
+                "left": self.roi["x"], "top": self.roi["y"],
+                "width": self.roi["w"], "height": self.roi["h"],
+            }
+        else:
+            # monitors[0] is the combined virtual display (all screens stitched).
+            # monitors[1] is the primary physical display.
+            # Guard against setups where mss returns fewer entries than expected.
+            monitors = self._sct.monitors
+            if len(monitors) >= 2:
+                monitor = monitors[1]
+            elif len(monitors) == 1:
+                print("  [warn] mss only found the virtual monitor — using monitors[0] (full combined)")
+                monitor = monitors[0]
+            else:
+                raise RuntimeError("mss returned no monitors — check display connection and Screen Recording permission")
         img = self._sct.grab(monitor)
         return np.array(img)[:, :, :3]   # BGRA → BGR
 
@@ -437,6 +460,18 @@ class Clicker:
             except pyautogui.FailSafeException:
                 print("  [failsafe] mouse hit corner — stopping")
                 raise SystemExit(1)
+            except Exception as e:
+                # On macOS this path fires when Accessibility is blocked.
+                # pyautogui normally doesn't raise here, but CGEvent failures
+                # can surface as exceptions from underlying calls.
+                print(f"  [ERROR] click failed: {e}")
+                if IS_MAC:
+                    print(
+                        "  ── accessibility blocked? ──────────────────────────────────\n"
+                        "  System Settings → Privacy & Security → Accessibility\n"
+                        "  → add Terminal (or your app) → toggle ON → restart Terminal\n"
+                        "  ─────────────────────────────────────────────────────────────"
+                    )
             if i < self.cfg.click_times - 1:
                 time.sleep(random.uniform(self.cfg.click_gap_min, self.cfg.click_gap_max))
 
@@ -457,13 +492,19 @@ class Visualiser:
     FALLBACK_FILE = "debug_out.png"
 
     def __init__(self, scale: float = 1.0) -> None:
-        self._use_window: Optional[bool] = None
         self._scale = scale
-        try:
-            cv2.namedWindow(self.WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-            cv2.resizeWindow(self.WINDOW, 960, 540)
-        except Exception:
-            pass
+        # cv2.imshow is unreliable on macOS (requires main-thread Cocoa event
+        # loop, crashes in Terminal sessions).  Force file fallback immediately.
+        if IS_MAC:
+            self._use_window: Optional[bool] = False
+            print(f"  [debug] macOS — skipping live window, writing {self.FALLBACK_FILE} each frame")
+        else:
+            self._use_window = None   # probe on first show()
+            try:
+                cv2.namedWindow(self.WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+                cv2.resizeWindow(self.WINDOW, 960, 540)
+            except Exception:
+                pass
 
     def _draw(self, frame: np.ndarray, detections: List[Detection], roi_offset: Tuple[int, int]) -> np.ndarray:
         vis = frame.copy()
@@ -706,7 +747,7 @@ def setup_sprites_dir(cfg: Config) -> None:
     while True:
         print(f"  current sprites dir: {cfg.sprites_dir}")
         choice = ask("  press ENTER to keep, or enter a new path", cfg.sprites_dir)
-        cfg.sprites_dir = choice
+        cfg.sprites_dir = str(Path(choice).expanduser())
         p = Path(cfg.sprites_dir)
         if not p.exists():
             print(f"  '{cfg.sprites_dir}' doesn't exist")
@@ -885,6 +926,14 @@ class SpriteClicker:
         self.vis = Visualiser(scale=ph.scale) if cfg.debug else None
         self._listener = _start_keyboard_listener(self._stop)
         self._use_msvcrt = (self._listener is None and platform.system() == "Windows")
+        self._pynput_failed_mac = (self._listener is None and IS_MAC)
+        if self._pynput_failed_mac:
+            print(
+                "  [warn] pynput keyboard listener could not start on macOS.\n"
+                "  This usually means Accessibility permission is missing.\n"
+                "  ESC hotkey is unavailable — use Ctrl+C or mouse → top-left corner to stop.\n"
+                "  To restore ESC: System Settings → Privacy & Security → Accessibility → Terminal → ON"
+            )
 
     def run(self) -> None:
         if not self.detector.templates:
@@ -894,6 +943,9 @@ class SpriteClicker:
         if self._use_msvcrt:
             print("\n  running — press ESC to stop | mouse → top-left corner = emergency brake")
             print("  (pynput hook unavailable — using keyboard polling)\n")
+        elif self._pynput_failed_mac:
+            print("\n  running — Ctrl+C to stop | mouse → top-left corner = emergency brake")
+            print("  (pynput failed — ESC not available, see warning above)\n")
         else:
             print("\n  running — ESC to stop | mouse → top-left corner = emergency brake\n")
 
@@ -933,7 +985,12 @@ class SpriteClicker:
                         print(f"  [{status}] {name}  shape={d.shape_score:.2f}  dist={d.color_dist:.3f}  pos=({d.x},{d.y})")
 
                 frames += 1
-                time.sleep(self.cfg.loop_delay)
+                # On macOS, mss capture is slower and a zero delay causes CPU
+                # spikes. Enforce a minimum without modifying the saved config.
+                effective_delay = self.cfg.loop_delay
+                if IS_MAC:
+                    effective_delay = max(effective_delay, 0.1)
+                time.sleep(effective_delay)
 
         except KeyboardInterrupt:
             pass
